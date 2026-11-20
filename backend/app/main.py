@@ -1,7 +1,9 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
+from app.models import RouteRequest, RouteResponse
+from app.routing import compute_route
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.graph import load_road_graph, get_graph_statistics
@@ -52,3 +54,25 @@ def graph_stats(request: Request):
     G = request.app.state.road_graph
 
     return get_graph_statistics(G)
+
+
+@app.post("/api/route", response_model=RouteResponse)
+def calculate_route(req: RouteRequest, request: Request):
+
+    G = request.app.state.road_graph
+
+    try:
+        result = compute_route(
+            G=G,
+            start=req.start,
+            end=req.end,
+            criteria=req.criteria,
+        )
+
+        return result
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error),
+        )
