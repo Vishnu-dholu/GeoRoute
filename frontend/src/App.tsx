@@ -36,6 +36,11 @@ interface BenchmarkResult {
   };
 }
 
+interface BenchmarkResults {
+  distance: BenchmarkResult;
+  time: BenchmarkResult;
+}
+
 const API_URL = "http://localhost:8000";
 
 const inputClass =
@@ -53,7 +58,7 @@ function App() {
   const [criteria, setCriteria] = useState<Criteria>("distance");
   const [repetitions, setRepetitions] = useState(5);
 
-  const [result, setResult] = useState<BenchmarkResult | null>(null);
+  const [results, setResults] = useState<BenchmarkResults | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -116,39 +121,44 @@ function App() {
 };
 
   const runBenchmark = async () => {
-    setError("");
-    setResult(null);
+  setError("");
+  setResults(null);
 
-    const values = [startLat, startLon, endLat, endLon];
+  const values = [startLat, startLon, endLat, endLon];
 
-    if (values.some((v) => !v.trim())) {
-      setError("Please enter all coordinates.");
-      return;
-    }
+  if (values.some((v) => !v.trim())) {
+    setError("Please enter all coordinates.");
+    return;
+  }
 
-    const [lat1, lon1, lat2, lon2] = values.map(Number);
+  const [lat1, lon1, lat2, lon2] = values.map(Number);
 
-    if (
-      ![lat1, lon1, lat2, lon2].every(Number.isFinite) ||
-      Math.abs(lat1) > 90 ||
-      Math.abs(lat2) > 90 ||
-      Math.abs(lon1) > 180 ||
-      Math.abs(lon2) > 180
-    ) {
-      setError("Please enter valid latitude and longitude values.");
-      return;
-    }
+  if (
+    ![lat1, lon1, lat2, lon2].every(Number.isFinite) ||
+    Math.abs(lat1) > 90 ||
+    Math.abs(lat2) > 90 ||
+    Math.abs(lon1) > 180 ||
+    Math.abs(lon2) > 180
+  ) {
+    setError("Please enter valid latitude and longitude values.");
+    return;
+  }
 
-    setLoading(true);
+  setLoading(true);
 
-    try {
+  try {
+    const runSingleBenchmark = async (
+      benchmarkCriteria: Criteria
+    ): Promise<BenchmarkResult> => {
       const response = await fetch(`${API_URL}/api/benchmark`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           start: [lat1, lon1],
           end: [lat2, lon2],
-          criteria,
+          criteria: benchmarkCriteria,
           repetitions,
         }),
       });
@@ -159,21 +169,33 @@ function App() {
         throw new Error(
           typeof data.detail === "string"
             ? data.detail
-            : "Benchmark request failed."
+            : `Benchmark failed for ${benchmarkCriteria}.`
         );
       }
 
-      setResult(data as BenchmarkResult);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to connect to GeoRoute backend."
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+      return data as BenchmarkResult;
+    };
+
+    // Run sequentially to avoid CPU contention.
+    const distanceResult = await runSingleBenchmark("distance");
+
+    const timeResult = await runSingleBenchmark("time");
+
+    setResults({
+      distance: distanceResult,
+      time: timeResult,
+    });
+
+  } catch (err) {
+    setError(
+      err instanceof Error
+        ? err.message
+        : "Unable to connect to GeoRoute backend."
+    );
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleMapClick = (coordinate: Coordinate) => {
   const [latitude, longitude] = coordinate;
@@ -416,7 +438,7 @@ function App() {
             <div>
               <h3 className="font-semibold">Benchmark Configuration</h3>
               <p className="mt-1 text-xs text-slate-500">
-                Configure your route and optimization parameters.
+                Compare Dijkstra and A* across shortest-distance and fastest-time routing.
               </p>
             </div>
             <span className="text-[10px] tracking-widest text-slate-500">
@@ -444,25 +466,12 @@ function App() {
             />
           </div>
 
-          <div className="mt-6 grid gap-4 md:grid-cols-3">
-            <div>
-              <label className="text-xs text-slate-400">
-                Optimization Criteria
-              </label>
-              <select
-                value={criteria}
-                onChange={(e) => setCriteria(e.target.value as Criteria)}
-                className={inputClass}
-              >
-                <option value="distance">Shortest Distance</option>
-                <option value="time">Fastest Travel Time</option>
-              </select>
-            </div>
-
+          <div className="mt-6 grid gap-4 md:grid-cols-2">
             <div>
               <label className="text-xs text-slate-400">
                 Benchmark Repetitions
               </label>
+
               <select
                 value={repetitions}
                 onChange={(e) => setRepetitions(Number(e.target.value))}
@@ -485,10 +494,10 @@ function App() {
                 {loading ? (
                   <>
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                    Running Benchmark...
+                    Running Benchmarks...
                   </>
                 ) : (
-                  <>▶ Run Benchmark</>
+                  <>▶ Run All Benchmarks</>
                 )}
               </button>
             </div>
@@ -502,7 +511,7 @@ function App() {
         </section>
 
         {/* Empty state */}
-        {!result && !loading && (
+        {!results && !loading && (
           <section className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-900/40 px-5 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-500/10 text-2xl text-blue-400">
               ↗
@@ -520,149 +529,30 @@ function App() {
             <span className="h-9 w-9 animate-spin rounded-full border-4 border-slate-700 border-t-blue-500" />
             <h3 className="mt-5 font-semibold">Analyzing Road Network</h3>
             <p className="mt-2 text-xs text-slate-500">
-              Running algorithms and collecting performance metrics...
+              Running distance and time benchmarks for Dijkstra and A*...
             </p>
           </section>
         )}
 
         {/* Results */}
-        {result && (
+        {results && (
           <>
-            <section className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-              <div>
-                <p className="text-[10px] font-bold tracking-widest text-blue-400">
-                  BENCHMARK RESULTS
-                </p>
-                <h3 className="mt-1 text-2xl font-bold">
-                  Performance Overview
-                </h3>
-              </div>
+            <BenchmarkSection
+              title="Shortest Distance Optimization"
+              result={results.distance}
+              format={format}
+            />
 
-              <span
-                className={`w-fit rounded-lg border px-3 py-2 text-xs ${
-                  result.comparison.optimality_verified
-                    ? "border-green-900 bg-green-950/50 text-green-400"
-                    : "border-red-900 bg-red-950/50 text-red-400"
-                }`}
-              >
-                {result.comparison.optimality_verified
-                  ? "✓ Optimality Verified"
-                  : "! Optimality Mismatch"}
-              </span>
-            </section>
+            <BenchmarkSection
+              title="Fastest Travel Time Optimization"
+              result={results.time}
+              format={format}
+            />
 
-            {/* Summary cards */}
-            <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <StatCard
-                title="Execution Speedup"
-                value={
-                  result.comparison.speedup !== null
-                    ? `${format(result.comparison.speedup)}×`
-                    : "N/A"
-                }
-                detail="Dijkstra / A*"
-                icon="⚡"
-              />
-
-              <StatCard
-                title="Time Improvement"
-                value={`${format(result.comparison.execution_time_improvement_percent)}%`}
-                detail="Execution time difference"
-                icon="◷"
-              />
-
-              <StatCard
-                title="Node Reduction"
-                value={`${format(result.comparison.expanded_nodes_reduction_percent)}%`}
-                detail="Fewer expanded nodes"
-                icon="◎"
-              />
-
-              <StatCard
-                title="Route Distance"
-                value={`${format(result.dijkstra.distance_m)} m`}
-                detail="Calculated route distance"
-                icon="↗"
-              />
-            </section>
-
-            {/* Charts */}
-            <section className="grid gap-5 lg:grid-cols-2">
-              <ComparisonCard
-                title="Execution Time"
-                subtitle="Median execution time across repetitions"
-                unit="MILLISECONDS"
-                firstValue={result.dijkstra.execution_time_ms}
-                secondValue={result.astar.execution_time_ms}
-                format={format}
-              />
-
-              <ComparisonCard
-                title="Expanded Nodes"
-                subtitle="Nodes explored during graph traversal"
-                unit="NODES"
-                firstValue={result.dijkstra.expanded_nodes}
-                secondValue={result.astar.expanded_nodes}
-                format={format}
-              />
-            </section>
-
-            {/* Comparison table */}
-            <section className={cardClass}>
-              <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 className="font-semibold">
-                    Detailed Algorithm Comparison
-                  </h3>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Performance metrics from the benchmark API.
-                  </p>
-                </div>
-                <span className="text-[10px] tracking-widest text-slate-500">
-                  {result.repetitions} REPETITIONS
-                </span>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[480px] text-left text-xs">
-                  <thead className="text-[10px] uppercase tracking-wider text-slate-500">
-                    <tr className="border-b border-slate-700">
-                      <th className="px-4 py-4">Metric</th>
-                      <th className="px-4 py-4">Dijkstra</th>
-                      <th className="px-4 py-4">A*</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[
-                      ["Execution Time", `${format(result.dijkstra.execution_time_ms)} ms`, `${format(result.astar.execution_time_ms)} ms`],
-                      ["Expanded Nodes", format(result.dijkstra.expanded_nodes), format(result.astar.expanded_nodes)],
-                      ["Settled Nodes", format(result.dijkstra.settled_nodes), format(result.astar.settled_nodes)],
-                      ["Route Distance", `${format(result.dijkstra.distance_m)} m`, `${format(result.astar.distance_m)} m`],
-                      ["Travel Time", `${format(result.dijkstra.travel_time_s)} s`, `${format(result.astar.travel_time_s)} s`],
-                      ["Nodes in Route", format(result.dijkstra.nodes_in_route), format(result.astar.nodes_in_route)],
-                      ["Objective Cost", format(result.dijkstra.objective_cost), format(result.astar.objective_cost)],
-                    ].map(([label, dijkstra, astar]) => (
-                      <tr
-                        key={label}
-                        className="border-b border-slate-800 last:border-0 hover:bg-slate-800/30"
-                      >
-                        <td className="px-4 py-4 text-slate-400">{label}</td>
-                        <td className="px-4 py-4 tabular-nums">{dijkstra}</td>
-                        <td className="px-4 py-4 font-semibold text-purple-300 tabular-nums">
-                          {astar}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            {/* Route information */}
             <section className={cardClass}>
               <h3 className="font-semibold">Route Information</h3>
               <p className="mt-1 text-xs text-slate-500">
-                Selected road network nodes.
+                Selected road network nodes used for both benchmark runs.
               </p>
 
               <div className="my-7 grid gap-5 text-center sm:grid-cols-3 sm:items-center">
@@ -671,18 +561,16 @@ function App() {
                     START NODE
                   </p>
                   <p className="mt-2 break-all text-sm font-semibold">
-                    {result.start_node}
+                    {results.distance.start_node}
                   </p>
                 </div>
 
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="h-0.5 flex-1 bg-blue-500" />
-                    <span className="text-xs text-slate-400">
-                      {result.dijkstra.nodes_in_route} route nodes
-                    </span>
-                    <span className="h-0.5 flex-1 bg-purple-500" />
-                  </div>
+                <div className="flex items-center gap-2">
+                  <span className="h-0.5 flex-1 bg-blue-500" />
+                  <span className="text-xs text-slate-400">
+                    {results.distance.dijkstra.nodes_in_route} route nodes
+                  </span>
+                  <span className="h-0.5 flex-1 bg-purple-500" />
                 </div>
 
                 <div>
@@ -690,21 +578,28 @@ function App() {
                     END NODE
                   </p>
                   <p className="mt-2 break-all text-sm font-semibold">
-                    {result.end_node}
+                    {results.distance.end_node}
                   </p>
                 </div>
               </div>
 
-              <div className="rounded-lg border border-green-900 bg-green-950/40 p-4">
-                <p className="text-sm font-semibold text-green-400">
-                  {result.comparison.optimality_verified
-                    ? "✓ Optimality Check Passed"
-                    : "! Optimality Check Failed"}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-4">
+                <p className="text-sm font-semibold text-white">
+                  Benchmark Verification
                 </p>
-                <p className="mt-1 text-xs text-green-300/70">
-                  {result.comparison.optimality_verified
-                    ? "Both algorithms returned the same objective cost."
-                    : "The algorithms returned different objective costs."}
+
+                <p className="mt-2 text-xs text-slate-400">
+                  Shortest-distance optimization:{" "}
+                  <span className={results.distance.comparison.optimality_verified ? "text-green-400" : "text-red-400"}>
+                    {results.distance.comparison.optimality_verified ? "Verified" : "Mismatch"}
+                  </span>
+                </p>
+
+                <p className="mt-1 text-xs text-slate-400">
+                  Fastest-time optimization:{" "}
+                  <span className={results.time.comparison.optimality_verified ? "text-green-400" : "text-red-400"}>
+                    {results.time.comparison.optimality_verified ? "Verified" : "Mismatch"}
+                  </span>
                 </p>
               </div>
             </section>
@@ -717,6 +612,140 @@ function App() {
         </footer>
       </main>
     </div>
+  );
+}
+
+function BenchmarkSection({
+  title,
+  result,
+  format,
+}: {
+  title: string;
+  result: BenchmarkResult;
+  format: (value: number) => string;
+}) {
+  const rows: [string, string, string][] = [
+    ["Execution Time", `${format(result.dijkstra.execution_time_ms)} ms`, `${format(result.astar.execution_time_ms)} ms`],
+    ["Expanded Nodes", format(result.dijkstra.expanded_nodes), format(result.astar.expanded_nodes)],
+    ["Settled Nodes", format(result.dijkstra.settled_nodes), format(result.astar.settled_nodes)],
+    ["Route Distance", `${format(result.dijkstra.distance_m)} m`, `${format(result.astar.distance_m)} m`],
+    ["Travel Time", `${format(result.dijkstra.travel_time_s)} s`, `${format(result.astar.travel_time_s)} s`],
+    ["Nodes in Route", format(result.dijkstra.nodes_in_route), format(result.astar.nodes_in_route)],
+    ["Objective Cost", format(result.dijkstra.objective_cost), format(result.astar.objective_cost)],
+  ];
+
+  return (
+    <section className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-bold tracking-widest text-blue-400">
+            BENCHMARK RESULTS
+          </p>
+          <h3 className="mt-1 text-2xl font-bold">{title}</h3>
+          <p className="mt-1 text-xs text-slate-500">
+            {result.repetitions} repetitions per algorithm
+          </p>
+        </div>
+
+        <span
+          className={`rounded-lg border px-3 py-2 text-xs ${
+            result.comparison.optimality_verified
+              ? "border-green-900 bg-green-950/50 text-green-400"
+              : "border-red-900 bg-red-950/50 text-red-400"
+          }`}
+        >
+          {result.comparison.optimality_verified
+            ? "✓ Optimality Verified"
+            : "! Optimality Mismatch"}
+        </span>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          title="Execution Speedup"
+          value={result.comparison.speedup !== null ? `${format(result.comparison.speedup)}×` : "N/A"}
+          detail="Dijkstra / A*"
+          icon="⚡"
+        />
+        <StatCard
+          title="Execution Improvement"
+          value={`${format(result.comparison.execution_time_improvement_percent)}%`}
+          detail="Execution time reduction"
+          icon="◷"
+        />
+        <StatCard
+          title="Node Reduction"
+          value={`${format(result.comparison.expanded_nodes_reduction_percent)}%`}
+          detail="Fewer expanded nodes"
+          icon="◎"
+        />
+        <StatCard
+          title="Route Distance"
+          value={`${format(result.dijkstra.distance_m / 1000)} km`}
+          detail="Calculated route distance"
+          icon="↗"
+        />
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <ComparisonCard
+          title="Execution Time"
+          subtitle="Median execution time across repetitions"
+          unit="MILLISECONDS"
+          firstValue={result.dijkstra.execution_time_ms}
+          secondValue={result.astar.execution_time_ms}
+          format={format}
+        />
+        <ComparisonCard
+          title="Expanded Nodes"
+          subtitle="Nodes explored during graph traversal"
+          unit="NODES"
+          firstValue={result.dijkstra.expanded_nodes}
+          secondValue={result.astar.expanded_nodes}
+          format={format}
+        />
+      </div>
+
+      <section className={cardClass}>
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold">Detailed Algorithm Comparison</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Dijkstra versus A* performance metrics.
+            </p>
+          </div>
+          <span className="text-[10px] tracking-widest text-slate-500">
+            {result.repetitions} REPETITIONS
+          </span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[480px] text-left text-xs">
+            <thead className="text-[10px] uppercase tracking-wider text-slate-500">
+              <tr className="border-b border-slate-700">
+                <th className="px-4 py-4">Metric</th>
+                <th className="px-4 py-4">Dijkstra</th>
+                <th className="px-4 py-4">A*</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(([label, dijkstra, astar]) => (
+                <tr
+                  key={label}
+                  className="border-b border-slate-800 last:border-0 hover:bg-slate-800/30"
+                >
+                  <td className="px-4 py-4 text-slate-400">{label}</td>
+                  <td className="px-4 py-4 tabular-nums">{dijkstra}</td>
+                  <td className="px-4 py-4 font-semibold text-purple-300 tabular-nums">
+                    {astar}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
   );
 }
 
