@@ -1,6 +1,14 @@
 
 import { useState } from "react";
 
+import RouteMap from "./components/Map/RouteMap";
+import {
+  calculateRoute,
+  type Coordinate,
+  type RouteResponse,
+  type Algorithm,
+} from "./services/routingService";
+
 type Criteria = "distance" | "time";
 
 interface AlgorithmResult {
@@ -49,8 +57,63 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const [algorithm, setAlgorithm] = useState<Algorithm>("astar");
+
+  const [routeResult, setRouteResult] = useState<RouteResponse | null>(null);
+
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeError, setRouteError] = useState("");
+
+  const [selectionMode, setSelectionMode] = useState<"start" | "end">("start");
+
   const format = (value: number) =>
     value.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+
+  const runRoute = async () => {
+  setRouteError("");
+  setRouteResult(null);
+
+  const values = [startLat, startLon, endLat, endLon];
+
+  if (values.some((value) => !value.trim())) {
+    setRouteError("Please enter all coordinates.");
+    return;
+  }
+
+  const [lat1, lon1, lat2, lon2] = values.map(Number);
+
+  if (
+    ![lat1, lon1, lat2, lon2].every(Number.isFinite) ||
+    Math.abs(lat1) > 90 ||
+    Math.abs(lat2) > 90 ||
+    Math.abs(lon1) > 180 ||
+    Math.abs(lon2) > 180
+  ) {
+    setRouteError("Please enter valid latitude and longitude values.");
+    return;
+  }
+
+  setRouteLoading(true);
+
+  try {
+    const data = await calculateRoute({
+      start: [lat1, lon1],
+      end: [lat2, lon2],
+      criteria,
+      algorithm,
+    });
+
+    setRouteResult(data);
+  } catch (err) {
+    setRouteError(
+      err instanceof Error
+        ? err.message
+        : "Unable to calculate the route."
+    );
+  } finally {
+    setRouteLoading(false);
+  }
+};
 
   const runBenchmark = async () => {
     setError("");
@@ -112,6 +175,23 @@ function App() {
     }
   };
 
+  const handleMapClick = (coordinate: Coordinate) => {
+  const [latitude, longitude] = coordinate;
+
+  if (selectionMode === "start") {
+    setStartLat(latitude.toFixed(6));
+    setStartLon(longitude.toFixed(6));
+    setSelectionMode("end");
+  } else {
+    setEndLat(latitude.toFixed(6));
+    setEndLon(longitude.toFixed(6));
+    setSelectionMode("start");
+  }
+
+  setRouteResult(null);
+  setRouteError("");
+};
+
   return (
     <div className="min-h-screen bg-[#090e19] text-slate-200">
       {/* Header */}
@@ -157,6 +237,165 @@ function App() {
             Road network available
           </div>
         </section>
+
+
+        {/* Interactive Route Planner */}
+        <section className={cardClass}>
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-bold tracking-widest text-blue-400">
+                INTERACTIVE GIS
+              </p>
+              <h3 className="mt-1 text-xl font-bold">Route Planner</h3>
+              <p className="mt-1 text-xs text-slate-500">
+                Select locations on the map and calculate the optimal route.
+              </p>
+            </div>
+
+            <span className="rounded-md bg-blue-500/10 px-3 py-2 text-xs text-blue-400">
+              Bengaluru Road Network
+            </span>
+          </div>
+
+          <div className="mb-4 flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => setSelectionMode("start")}
+              className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                selectionMode === "start"
+                  ? "bg-blue-600 text-white"
+                  : "border border-slate-700 text-slate-400 hover:bg-slate-800"
+              }`}
+            >
+              Select Starting Point
+            </button>
+
+            <button
+              onClick={() => setSelectionMode("end")}
+              className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                selectionMode === "end"
+                  ? "bg-purple-600 text-white"
+                  : "border border-slate-700 text-slate-400 hover:bg-slate-800"
+              }`}
+            >
+              Select Destination
+            </button>
+
+            <span className="text-xs text-slate-500">
+              Click the map to set the{" "}
+              <strong className="text-white">
+                {selectionMode === "start" ? "starting point" : "destination"}
+              </strong>
+            </span>
+          </div>
+
+          <RouteMap
+            start={
+              Number.isFinite(Number(startLat)) &&
+              Number.isFinite(Number(startLon)) &&
+              Math.abs(Number(startLat)) <= 90 &&
+              Math.abs(Number(startLon)) <= 180
+                ? [Number(startLat), Number(startLon)]
+                : null
+            }
+            end={
+              Number.isFinite(Number(endLat)) &&
+              Number.isFinite(Number(endLon)) &&
+              Math.abs(Number(endLat)) <= 90 &&
+              Math.abs(Number(endLon)) <= 180
+                ? [Number(endLat), Number(endLon)]
+                : null
+            }
+            route={routeResult?.coordinates ?? []}
+            onMapClick={handleMapClick}
+          />
+
+          <div className="mt-5 grid gap-4 md:grid-cols-3">
+            <div>
+              <label className="text-xs text-slate-400">
+                Route Optimization
+              </label>
+              <select
+                value={criteria}
+                onChange={(e) => {
+                  setCriteria(e.target.value as Criteria);
+                  setRouteResult(null);
+                }}
+                className={inputClass}
+              >
+                <option value="distance">Shortest Distance</option>
+                <option value="time">Fastest Travel Time</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs text-slate-400">
+                Routing Algorithm
+              </label>
+              <select
+                value={algorithm}
+                onChange={(e) => {
+                  setAlgorithm(e.target.value as Algorithm);
+                  setRouteResult(null);
+                }}
+                className={inputClass}
+              >
+                <option value="astar">A* Search</option>
+                <option value="dijkstra">Dijkstra</option>
+              </select>
+            </div>
+
+            <div className="flex items-end">
+              <button
+                onClick={runRoute}
+                disabled={routeLoading}
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-wait disabled:opacity-60"
+              >
+                {routeLoading ? "Calculating Route..." : "Calculate Route"}
+              </button>
+            </div>
+          </div>
+
+          {routeError && (
+            <div className="mt-4 rounded-lg border border-red-900 bg-red-950/50 p-3 text-sm text-red-300">
+              {routeError}
+            </div>
+          )}
+
+          {routeResult && (
+            <div className="mt-5 rounded-xl border border-blue-900 bg-blue-950/30 p-5">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <h4 className="font-semibold text-white">Route Calculated</h4>
+                <span className="rounded-md bg-blue-500/10 px-3 py-1 text-xs text-blue-400">
+                  {routeResult.metadata.algorithm.toUpperCase()}
+                </span>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-xs text-slate-400">Distance</p>
+                  <p className="mt-2 text-xl font-bold text-white">
+                    {format(routeResult.distance_m / 1000)} km
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs text-slate-400">Estimated Travel Time</p>
+                  <p className="mt-2 text-xl font-bold text-white">
+                    {format(routeResult.travel_time_s / 60)} min
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs text-slate-400">Route Nodes</p>
+                  <p className="mt-2 text-xl font-bold text-white">
+                    {routeResult.metadata.nodes_in_route}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
 
         {/* Configuration */}
         <section className={cardClass}>
