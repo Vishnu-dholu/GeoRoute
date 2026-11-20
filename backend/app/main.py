@@ -7,6 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.models import RouteRequest, RouteResponse
 from app.routing import compute_route
 
+from app.models import BenchmarkRequest, BenchmarkResponse
+from app.benchmark import compare_algorithms
+
 from app.graph import load_road_graph, get_graph_statistics
 
 
@@ -77,6 +80,41 @@ def calculate_route(req: RouteRequest, request: Request):
 
         print("Returned algorithm:", result["metadata"]["algorithm"])
         print("=====================================\n")
+
+        return result
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error),
+        )
+
+
+
+@app.post(
+    "/api/benchmark",
+    response_model=BenchmarkResponse,
+)
+def benchmark_route(
+    req: BenchmarkRequest,
+    request: Request,
+):
+    G = request.app.state.road_graph
+
+    try:
+        result = compare_algorithms(
+            G=G,
+            start=req.start,
+            end=req.end,
+            criteria=req.criteria,
+            repetitions=req.repetitions,
+        )
+
+        if not result["comparison"]["optimality_verified"]:
+            raise HTTPException(
+                status_code=500,
+                detail="Dijkstra and A* returned different optimal costs",
+            )
 
         return result
 
