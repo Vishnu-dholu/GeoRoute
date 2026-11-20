@@ -344,15 +344,28 @@ function App() {
               </select>
             </div>
 
-            <div className="flex items-end">
+            
+            <div className="flex items-end gap-2">
               <button
                 onClick={runRoute}
                 disabled={routeLoading}
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-wait disabled:opacity-60"
+                className="flex h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-wait disabled:opacity-60"
               >
-                {routeLoading ? "Calculating Route..." : "Calculate Route"}
+                {routeLoading ? "Calculating..." : "Calculate Route"}
+              </button>
+
+              <button
+                onClick={() => {
+                  setRouteResult(null);
+                  setRouteError("");
+                }}
+                disabled={!routeResult && !routeError}
+                className="flex h-11 items-center justify-center rounded-lg border border-slate-700 px-4 text-sm font-semibold text-slate-300 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Clear Route
               </button>
             </div>
+
           </div>
 
           {routeError && (
