@@ -2,9 +2,10 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
 from app.models import RouteRequest, RouteResponse
 from app.routing import compute_route
-from fastapi.middleware.cors import CORSMiddleware
 
 from app.graph import load_road_graph, get_graph_statistics
 
@@ -61,13 +62,21 @@ def calculate_route(req: RouteRequest, request: Request):
 
     G = request.app.state.road_graph
 
+    print("\n========== ROUTE API DEBUG ==========")
+    print("Received algorithm:", req.algorithm)
+    print("Received criteria:", req.criteria)
+
     try:
         result = compute_route(
             G=G,
             start=req.start,
             end=req.end,
             criteria=req.criteria,
+            algorithm=req.algorithm,
         )
+
+        print("Returned algorithm:", result["metadata"]["algorithm"])
+        print("=====================================\n")
 
         return result
 

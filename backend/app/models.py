@@ -20,6 +20,11 @@ class RouteRequest(BaseModel):
         description="Routing criteria",
     )
 
+    algorithm: Literal["dijkstra", "astar"] = Field(
+        default="dijkstra",
+        description="Pathfinding algorithm",
+    )
+
 
 class RouteResponse(BaseModel):
     coordinates: list[tuple[float, float]]

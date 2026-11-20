@@ -5,13 +5,43 @@ import networkx as nx
 import osmnx as ox
 
 
+EARTH_RADIUS_M = 6_371_000
+
+
+def haversine_distance(node1, node2, G):
+    """
+    Calculate straight-line distance between two graph nodes.
+    Returns distance in metres.
+    """
+
+    lat1 = math.radians(G.nodes[node1]["y"])
+    lon1 = math.radians(G.nodes[node1]["x"])
+
+    lat2 = math.radians(G.nodes[node2]["y"])
+    lon2 = math.radians(G.nodes[node2]["x"])
+
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(lat1)
+        * math.cos(lat2)
+        * math.sin(dlon / 2) ** 2
+    )
+
+    return 2 * EARTH_RADIUS_M * math.asin(
+        math.sqrt(min(1.0, a))
+    )
+
+
 def find_nearest_node(G, coordinates):
     """
-    Find nearest road-network node.
+    Find nearest road node.
 
-    API coordinates: [latitude, longitude]
-    OSMnx expects: X=longitude, Y=latitude
+    Input coordinates: [latitude, longitude]
     """
+
     lat, lon = coordinates
 
     return ox.distance.nearest_nodes(
@@ -23,8 +53,7 @@ def find_nearest_node(G, coordinates):
 
 def select_best_edge(G, u, v, weight):
     """
-    Select the minimum-weight parallel edge
-    between nodes u and v.
+    Select minimum-weight parallel edge.
     """
 
     edges = G.get_edge_data(u, v)
@@ -34,7 +63,9 @@ def select_best_edge(G, u, v, weight):
 
     key = min(
         edges,
-        key=lambda k: float(edges[k].get(weight, math.inf)),
+        key=lambda k: float(
+            edges[k].get(weight, math.inf)
+        ),
     )
 
     return edges[key]
@@ -42,7 +73,7 @@ def select_best_edge(G, u, v, weight):
 
 def get_edge_coordinates(G, u, v, edge_data):
     """
-    Extract edge geometry in [latitude, longitude] format.
+    Extract edge geometry as [latitude, longitude].
     """
 
     geometry = edge_data.get("geometry")
@@ -50,66 +81,147 @@ def get_edge_coordinates(G, u, v, edge_data):
     if geometry is not None:
         coords = list(geometry.coords)
     else:
-        # Fallback: straight line between graph nodes
         coords = [
             (G.nodes[u]["x"], G.nodes[u]["y"]),
             (G.nodes[v]["x"], G.nodes[v]["y"]),
         ]
 
-    # Ensure geometry follows u -> v direction
     u_point = (G.nodes[u]["x"], G.nodes[u]["y"])
-    v_point = (G.nodes[v]["x"], G.nodes[v]["y"])
 
     first = coords[0]
     last = coords[-1]
 
-    start_distance = (
+    first_distance = (
         (first[0] - u_point[0]) ** 2
         + (first[1] - u_point[1]) ** 2
     )
 
-    reverse_distance = (
+    last_distance = (
         (last[0] - u_point[0]) ** 2
         + (last[1] - u_point[1]) ** 2
     )
 
-    if reverse_distance < start_distance:
+    if last_distance < first_distance:
         coords.reverse()
 
     return [(lat, lon) for lon, lat in coords]
 
 
-def compute_route(G, start, end, criteria="distance"):
+def get_max_graph_speed(G):
     """
-    Compute an optimal route using Dijkstra's algorithm.
+    Calculate maximum effective edge speed in metres/second.
+    """
+
+    max_speed = 0.0
+
+    for _, _, _, data in G.edges(keys=True, data=True):
+
+        length = float(data.get("length", 0))
+        travel_time = float(data.get("travel_time", 0))
+
+        if length > 0 and travel_time > 0:
+            speed = length / travel_time
+            max_speed = max(max_speed, speed)
+
+    if max_speed <= 0:
+        raise ValueError(
+            "Could not determine a valid maximum graph speed"
+        )
+
+    return max_speed
+
+
+def compute_route(
+    G,
+    start,
+    end,
+    criteria="distance",
+    algorithm="dijkstra",
+):
+    """
+    Compute optimal route using Dijkstra or A*.
 
     criteria:
-        distance -> minimum distance
-        time     -> minimum estimated travel time
+        distance -> shortest distance
+        time     -> fastest estimated time
+
+    algorithm:
+        dijkstra -> Dijkstra's shortest path
+        astar    -> A* search
     """
 
     if criteria not in ("distance", "time"):
-        raise ValueError("Criteria must be 'distance' or 'time'")
+        raise ValueError("Invalid routing criteria")
 
-    weight = "length" if criteria == "distance" else "travel_time"
+    if algorithm not in ("dijkstra", "astar"):
+        raise ValueError("Invalid routing algorithm")
 
-    # Step 1: Find nearest graph nodes
+    weight = (
+        "length"
+        if criteria == "distance"
+        else "travel_time"
+    )
+
+    # Find nearest road nodes
     start_node = find_nearest_node(G, start)
     end_node = find_nearest_node(G, end)
 
-    # Step 2: Run Dijkstra's algorithm
-    try:
-        path = nx.shortest_path(
-            G,
-            source=start_node,
-            target=end_node,
-            weight=weight,
-            method="dijkstra",
-        )
-    except nx.NetworkXNoPath:
-        raise ValueError("No route found between selected locations")
+    # Configure A* heuristic
+    if algorithm == "astar":
 
-    # Step 3: Reconstruct route geometry and calculate totals
+        if criteria == "distance":
+
+            def heuristic(u, v):
+                return haversine_distance(u, v, G)
+
+        else:
+
+            max_speed = get_max_graph_speed(G)
+
+            def heuristic(u, v):
+                straight_distance = haversine_distance(
+                    u, v, G
+                )
+
+                return straight_distance / max_speed
+
+    else:
+        heuristic = None
+
+    # Execute shortest-path algorithm
+    try:
+
+        if algorithm == "dijkstra":
+
+            path = nx.shortest_path(
+                G,
+                source=start_node,
+                target=end_node,
+                weight=weight,
+                method="dijkstra",
+            )
+
+        else:
+
+            path = nx.astar_path(
+                G,
+                source=start_node,
+                target=end_node,
+                heuristic=heuristic,
+                weight=weight,
+            )
+
+    except nx.NetworkXNoPath:
+        raise ValueError(
+            "No route found between selected locations"
+        )
+
+    except nx.NodeNotFound:
+        raise ValueError(
+            "Selected road node does not exist"
+        )
+
+    # Reconstruct route geometry
     coordinates = []
 
     total_distance = 0.0
@@ -117,33 +229,43 @@ def compute_route(G, start, end, criteria="distance"):
 
     for u, v in zip(path[:-1], path[1:]):
 
-        edge_data = select_best_edge(G, u, v, weight)
+        edge_data = select_best_edge(
+            G, u, v, weight
+        )
 
-        total_distance += float(edge_data.get("length", 0))
-        total_time += float(edge_data.get("travel_time", 0))
+        total_distance += float(
+            edge_data.get("length", 0)
+        )
+
+        total_time += float(
+            edge_data.get("travel_time", 0)
+        )
 
         edge_coords = get_edge_coordinates(
             G, u, v, edge_data
         )
 
-        # Avoid duplicate consecutive coordinates
         if coordinates and edge_coords:
             edge_coords = edge_coords[1:]
 
         coordinates.extend(edge_coords)
 
-    # Handle start and end being the same graph node
+    # Handle identical start and destination nodes
     if not coordinates:
-        node = G.nodes[start_node]
-        coordinates = [(node["y"], node["x"])]
 
-    # Step 4: Return route information
+        node = G.nodes[start_node]
+
+        coordinates = [
+            (node["y"], node["x"])
+        ]
+
     return {
         "coordinates": coordinates,
         "distance_m": round(total_distance, 2),
         "travel_time_s": round(total_time, 2),
+
         "metadata": {
-            "algorithm": "Dijkstra",
+            "algorithm": algorithm,
             "criteria": criteria,
             "start_node": start_node,
             "end_node": end_node,
