@@ -151,6 +151,7 @@ def calculate_path_metrics(G, path, weight):
     }
 
 
+
 def benchmark_algorithm(
     G,
     start_node,
@@ -160,7 +161,7 @@ def benchmark_algorithm(
     repetitions=5,
 ):
     """
-    Benchmark one algorithm using median execution time.
+    Benchmark one algorithm using warm-up and median metrics.
     """
 
     weight = (
@@ -169,7 +170,7 @@ def benchmark_algorithm(
         else "travel_time"
     )
 
-    # Configure the heuristic outside the timed search
+    # Configure heuristic outside the timed search
     if algorithm == "astar":
 
         if criteria == "distance":
@@ -190,25 +191,71 @@ def benchmark_algorithm(
     else:
         heuristic = None
 
-    execution_times = []
+    # ----------------------------------
+    # 1. Warm-up run (not measured)
+    # ----------------------------------
 
-    # Repeat searches to reduce timing fluctuations
+    run_instrumented_search(
+        G=G,
+        start_node=start_node,
+        end_node=end_node,
+        weight=weight,
+        algorithm=algorithm,
+        heuristic=heuristic,
+    )
+
+    # ----------------------------------
+    # 2. Collect measured repetitions
+    # ----------------------------------
+
+    execution_times = []
+    expanded_counts = []
+    settled_counts = []
+
+    path = None
+
     for _ in range(repetitions):
 
-        path, expanded, settled, elapsed = (
-            run_instrumented_search(
-                G=G,
-                start_node=start_node,
-                end_node=end_node,
-                weight=weight,
-                algorithm=algorithm,
-                heuristic=heuristic,
-            )
+        (
+            current_path,
+            expanded,
+            settled,
+            elapsed,
+        ) = run_instrumented_search(
+            G=G,
+            start_node=start_node,
+            end_node=end_node,
+            weight=weight,
+            algorithm=algorithm,
+            heuristic=heuristic,
         )
 
-        execution_times.append(elapsed)
+        path = current_path
 
-    # All repetitions should find the same optimal path cost.
+        execution_times.append(elapsed)
+        expanded_counts.append(expanded)
+        settled_counts.append(settled)
+
+    # ----------------------------------
+    # 3. Calculate median metrics
+    # ----------------------------------
+
+    median_execution_time = statistics.median(
+        execution_times
+    )
+
+    median_expanded_nodes = statistics.median(
+        expanded_counts
+    )
+
+    median_settled_nodes = statistics.median(
+        settled_counts
+    )
+
+    # ----------------------------------
+    # 4. Calculate route metrics
+    # ----------------------------------
+
     metrics = calculate_path_metrics(
         G, path, weight
     )
@@ -219,12 +266,20 @@ def benchmark_algorithm(
         else metrics["travel_time_s"]
     )
 
+    # ----------------------------------
+    # 5. Return benchmark results
+    # ----------------------------------
+
     return {
         "execution_time_ms": round(
-            statistics.median(execution_times), 4
+            median_execution_time, 4
         ),
-        "expanded_nodes": expanded,
-        "settled_nodes": settled,
+        "expanded_nodes": round(
+            median_expanded_nodes
+        ),
+        "settled_nodes": round(
+            median_settled_nodes
+        ),
         "distance_m": metrics["distance_m"],
         "travel_time_s": metrics["travel_time_s"],
         "nodes_in_route": metrics["nodes_in_route"],
